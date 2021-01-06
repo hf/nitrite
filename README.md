@@ -32,7 +32,7 @@ func verifyAttestation(attestation []byte) error {
 }
 ```
 
-This package includes the Nitro Enclave [Root CA certificates][nitro-root-ca].
+This package includes the Nitro Enclave [Root CA certificates][aws-nitro-root-ca].
 
 It's recommended you explicitly calculate the SHA256 sum of the `DefaultRootCA`
 string and match it according to the [AWS
