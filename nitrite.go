@@ -4,8 +4,8 @@ package nitrite
 import (
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"github.com/fxamacker/cbor/v2"
-	"io"
 	"time"
 )
 
@@ -25,14 +25,24 @@ type Document struct {
 
 // Result is a successful verification result of an attestation payload.
 type Result struct {
+	// Document contains the attestation document.
 	Document *Document `json:"document,omitempty"`
 
+	// Certificates contains all of the certificates except the root.
 	Certificates []*x509.Certificate `json:"certificates,omitempty"`
 
-	Protected   []byte `json:"protected,omitempty"`
+	// Protected section from the COSE Sign1 payload.
+	Protected []byte `json:"protected,omitempty"`
+	// Unprotected section from the COSE Sign1 payload.
 	Unprotected []byte `json:"unprotected,omitempty"`
-	Payload     []byte `json:"payload,omitempty"`
-	Signature   []byte `json:"signature,omitempty"`
+	// Payload section from the COSE Sign1 payload.
+	Payload []byte `json:"payload,omitempty"`
+	// Signature section from the COSE Sign1 payload.
+	Signature []byte `json:"signature,omitempty"`
+
+	// COSESign1 contains the COSE Signature Structure which was used to
+	// calculate the `Signature`.
+	COSESign1 []byte `json:"cose_sign1,omitempty"`
 }
 
 // VerifyOptions specifies the options for verifying the attestation payload.
@@ -48,13 +58,31 @@ type coseHeader struct {
 	Algorithm string `cbor:"1,keyasint,omitempty" json:"alg,omitempty"`
 }
 
-// Errors that are encountered when manipulating the COSE1Sign structure.
+type cosePayload struct {
+	_ struct{} `cbor:",toarray,omitempty"`
+
+	Protected   []byte
+	Unprotected cbor.RawMessage
+	Payload     []byte
+	Signature   []byte
+}
+
+type coseSignature struct {
+	_ struct{} `cbor:",toarray,omitempty"`
+
+	Context     string
+	Protected   []byte
+	ExternalAAD []byte
+	Payload     []byte
+}
+
+// Errors that are encountered when manipulating the COSESign1 structure.
 var (
-	ErrBadCOSE1SignStructure          error = errors.New("Data is not a COSE1Sign array")
-	ErrCOSE1SignEmptyProtectedSection error = errors.New("COSE1Sign protected section is nil or empty")
-	ErrCOSE1SignEmptyPayloadSection   error = errors.New("COSE1Sign payload section is nil or empty")
-	ErrCOSE1SignEmptySignatureSection error = errors.New("COSE1Sign signature section is nil or empty")
-	ErrCOSE1SignBadAlgorithm          error = errors.New("COSE1Sign algorithm not ECDSA384")
+	ErrBadCOSESign1Structure          error = errors.New("Data is not a COSESign1 array")
+	ErrCOSESign1EmptyProtectedSection error = errors.New("COSESign1 protected section is nil or empty")
+	ErrCOSESign1EmptyPayloadSection   error = errors.New("COSESign1 payload section is nil or empty")
+	ErrCOSESign1EmptySignatureSection error = errors.New("COSESign1 signature section is nil or empty")
+	ErrCOSESign1BadAlgorithm          error = errors.New("COSESign1 algorithm not ECDSA384")
 )
 
 // Errors encountered when parsing the CBOR attestation document.
@@ -73,6 +101,7 @@ var (
 	ErrBadNonce                         error = errors.New("Payload 'nonce' has a value of length not in [1, 512]")
 	ErrBadCertificatePublicKeyAlgorithm error = errors.New("Payload 'certificate' has a bad public key algorithm (not ECDSA)")
 	ErrBadCertificateSigningAlgorithm   error = errors.New("Payload 'certificate' has a bad public key signing algorithm (not ECDSAWithSHA384)")
+	ErrBadSignature                     error = errors.New("Payload's signature does not match signature from certificate")
 )
 
 const (
@@ -106,45 +135,41 @@ func createAWSNitroRoot() *x509.CertPool {
 // `time.Now()` will be used. It is strongly recommended you specifically
 // supply the time.  If the returned error is non-nil, it is either one of the
 // `Err` codes specified in this package, or is an error from the `crypto/x509`
-// package.
-func Verify(data io.Reader, options VerifyOptions) (*Result, error) {
-	cose1 := make([][]byte, 0, 4)
+// package. Revocation checks are NOT performed and you should check for
+// revoked certificates by looking at the `Certificates` field in the `Result`.
+func Verify(data []byte, options VerifyOptions) (*Result, error) {
+	cose := cosePayload{}
 
-	decoder := cbor.NewDecoder(data)
-	err := decoder.Decode(&cose1)
+	err := cbor.Unmarshal(data, &cose)
 	if nil != err {
-		return nil, ErrBadCOSE1SignStructure
+		return nil, ErrBadCOSESign1Structure
 	}
 
-	if nil == cose1 || 4 != len(cose1) {
-		return nil, ErrBadCOSE1SignStructure
+	if nil == cose.Protected || 0 == len(cose.Protected) {
+		return nil, ErrCOSESign1EmptyProtectedSection
 	}
 
-	if nil == cose1[0] || 0 == len(cose1[0]) {
-		return nil, ErrCOSE1SignEmptyProtectedSection
+	if nil == cose.Payload || 0 == len(cose.Payload) {
+		return nil, ErrCOSESign1EmptyPayloadSection
 	}
 
-	if nil == cose1[2] || 0 == len(cose1[2]) {
-		return nil, ErrCOSE1SignEmptyPayloadSection
-	}
-
-	if nil == cose1[3] || 0 == len(cose1[3]) {
-		return nil, ErrCOSE1SignEmptySignatureSection
+	if nil == cose.Signature || 0 == len(cose.Signature) {
+		return nil, ErrCOSESign1EmptySignatureSection
 	}
 
 	header := coseHeader{}
-	err = cbor.Unmarshal(cose1[0], &header)
+	err = cbor.Unmarshal(cose.Protected, &header)
 	if nil != err {
-		return nil, ErrBadCOSE1SignStructure
+		return nil, ErrBadCOSESign1Structure
 	}
 
 	if "ECDSA384" != header.Algorithm {
-		return nil, ErrCOSE1SignBadAlgorithm
+		return nil, ErrCOSESign1BadAlgorithm
 	}
 
 	doc := Document{}
 
-	err = cbor.Unmarshal(cose1[2], &doc)
+	err = cbor.Unmarshal(cose.Payload, &doc)
 	if nil != err {
 		return nil, ErrBadAttestationDocument
 	}
@@ -248,12 +273,28 @@ func Verify(data io.Reader, options VerifyOptions) (*Result, error) {
 		return nil, err
 	}
 
+	sigStruct, err := cbor.Marshal(&coseSignature{
+		Context:     "Signature1",
+		Protected:   cose.Protected,
+		ExternalAAD: []byte{},
+		Payload:     cose.Payload,
+	})
+	if nil != err {
+		panic(fmt.Sprintf("Failed to marshal a cbor signature structure %v", err))
+	}
+
+	err = cert.CheckSignature(x509.ECDSAWithSHA384, sigStruct, cose.Signature)
+	if nil != err {
+		return nil, ErrBadSignature
+	}
+
 	return &Result{
 		Document:     &doc,
 		Certificates: certificates,
-		Protected:    cose1[0],
-		Unprotected:  cose1[1],
-		Payload:      cose1[2],
-		Signature:    cose1[3],
+		Protected:    cose.Protected,
+		Unprotected:  cose.Unprotected,
+		Payload:      cose.Payload,
+		Signature:    cose.Signature,
+		COSESign1:    sigStruct,
 	}, nil
 }
