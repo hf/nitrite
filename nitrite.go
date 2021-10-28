@@ -2,11 +2,15 @@
 package nitrite
 
 import (
+	"crypto/ecdsa"
+	"crypto/sha512"
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"github.com/fxamacker/cbor/v2"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
+	mozcose "go.mozilla.org/cose"
 )
 
 // Document represents the AWS Nitro Enclave Attestation Document.
@@ -55,7 +59,9 @@ type VerifyOptions struct {
 }
 
 type coseHeader struct {
-	Algorithm string `cbor:"1,keyasint,omitempty" json:"alg,omitempty"`
+	Alg int    `cbor:"1,keyasint,omitempty" json:"alg,omitempty"`
+	Kid []byte `cbor:"4,keyasint,omitempty"`
+	IV  []byte `cbor:"5,keyasint,omitempty"`
 }
 
 type cosePayload struct {
@@ -96,9 +102,9 @@ var (
 	ErrBadPCRValue                      error = errors.New("Payload 'pcrs' value is nil or not of length {32,48,64}")
 	ErrBadCABundle                      error = errors.New("Payload 'cabundle' has 0 elements")
 	ErrBadCABundleItem                  error = errors.New("Payload 'cabundle' has a nil item or of length not in [1, 1024]")
-	ErrBadPublicKey                     error = errors.New("Payload 'public_key' has a value of length not in [1, 1024]")
-	ErrBadUserData                      error = errors.New("Payload 'user_data' has a value of length not in [1, 512]")
-	ErrBadNonce                         error = errors.New("Payload 'nonce' has a value of length not in [1, 512]")
+	ErrBadPublicKey                     error = errors.New("Payload 'public_key' has a value of length > 1024")
+	ErrBadUserData                      error = errors.New("Payload 'user_data' has a value of length > 512")
+	ErrBadNonce                         error = errors.New("Payload 'nonce' has a value of length > 512")
 	ErrBadCertificatePublicKeyAlgorithm error = errors.New("Payload 'certificate' has a bad public key algorithm (not ECDSA)")
 	ErrBadCertificateSigningAlgorithm   error = errors.New("Payload 'certificate' has a bad public key signing algorithm (not ECDSAWithSHA384)")
 	ErrBadSignature                     error = errors.New("Payload's signature does not match signature from certificate")
@@ -111,7 +117,7 @@ const (
 	// It's recommended you calculate the SHA256 sum of this string and match
 	// it to the one supplied in the AWS documentation
 	// https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html
-	DefaultCARoots string = "-----BEGIN CERTIFICATE-----\nMIICETCCAZagAwIBAgIRAPkxdWgbkK/hHUbMtOTn+FYwCgYIKoZIzj0EAwMwSTEL\nMAkGA1UEBhMCVVMxDzANBgNVBAoMBkFtYXpvbjEMMAoGA1UECwwDQVdTMRswGQYD\nVQQDDBJhd3Mubml0cm8tZW5jbGF2ZXMwHhcNMTkxMDI4MTMyODA1WhcNNDkxMDI4\nMTQyODA1WjBJMQswCQYDVQQGEwJVUzEPMA0GA1UECgwGQW1hem9uMQwwCgYDVQQL\nDANBV1MxGzAZBgNVBAMMEmF3cy5uaXRyby1lbmNsYXZlczB2MBAGByqGSM49AgEG\nBSuBBAAiA2IABPwCVOumCMHzaHDimtqQvkY4MpJzbolL//Zy2YlES1BR5TSksfbb\n48C8WBoyt7F2Bw7eEtaaP+ohG2bnUs990d0JX28TcPQXCEPZ3BABIeTPYwEoCWZE\nh8l5YoQwTcU/9KNCMEAwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUkCW1DdkF\nR+eWw5b6cp3PmanfS5YwDgYDVR0PAQH/BAQDAgGGMAoGCCqGSM49BAMDA2kAMGYC\nMQCjfy+Rocm9Xue4YnwWmNJVA44fA0P5W2OpYow9OYCVRaEevL8uO1XYru5xtMPW\nrfMCMQCi85sWBbJwKKXdS6BptQFuZbT73o/gBh1qUxl/nNr12UO8Yfwr6wPLb+6N\nIwLz3/Y=\n-----END CERTIFICATE----\n"
+	DefaultCARoots string = "-----BEGIN CERTIFICATE-----\nMIICETCCAZagAwIBAgIRAPkxdWgbkK/hHUbMtOTn+FYwCgYIKoZIzj0EAwMwSTEL\nMAkGA1UEBhMCVVMxDzANBgNVBAoMBkFtYXpvbjEMMAoGA1UECwwDQVdTMRswGQYD\nVQQDDBJhd3Mubml0cm8tZW5jbGF2ZXMwHhcNMTkxMDI4MTMyODA1WhcNNDkxMDI4\nMTQyODA1WjBJMQswCQYDVQQGEwJVUzEPMA0GA1UECgwGQW1hem9uMQwwCgYDVQQL\nDANBV1MxGzAZBgNVBAMMEmF3cy5uaXRyby1lbmNsYXZlczB2MBAGByqGSM49AgEG\nBSuBBAAiA2IABPwCVOumCMHzaHDimtqQvkY4MpJzbolL//Zy2YlES1BR5TSksfbb\n48C8WBoyt7F2Bw7eEtaaP+ohG2bnUs990d0JX28TcPQXCEPZ3BABIeTPYwEoCWZE\nh8l5YoQwTcU/9KNCMEAwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUkCW1DdkF\nR+eWw5b6cp3PmanfS5YwDgYDVR0PAQH/BAQDAgGGMAoGCCqGSM49BAMDA2kAMGYC\nMQCjfy+Rocm9Xue4YnwWmNJVA44fA0P5W2OpYow9OYCVRaEevL8uO1XYru5xtMPW\nrfMCMQCi85sWBbJwKKXdS6BptQFuZbT73o/gBh1qUxl/nNr12UO8Yfwr6wPLb+6N\nIwLz3/Y=\n-----END CERTIFICATE-----\n"
 )
 
 var (
@@ -163,10 +169,9 @@ func Verify(data []byte, options VerifyOptions) (*Result, error) {
 		return nil, ErrBadCOSESign1Structure
 	}
 
-	if "ECDSA384" != header.Algorithm {
+	if mozcose.ES384.Value != header.Alg {
 		return nil, ErrCOSESign1BadAlgorithm
 	}
-
 	doc := Document{}
 
 	err = cbor.Unmarshal(cose.Payload, &doc)
@@ -195,7 +200,7 @@ func Verify(data []byte, options VerifyOptions) (*Result, error) {
 			return nil, ErrBadPCRIndex
 		}
 
-		if nil == value || 32 != len(value) || 48 != len(value) || 64 != len(value) {
+		if nil == value || (32 != len(value) && 48 != len(value) && 64 != len(value)) {
 			return nil, ErrBadPCRValue
 		}
 	}
@@ -210,15 +215,15 @@ func Verify(data []byte, options VerifyOptions) (*Result, error) {
 		}
 	}
 
-	if nil != doc.PublicKey && (len(doc.PublicKey) < 1 || len(doc.PublicKey) > 1024) {
+	if len(doc.PublicKey) > 1024 {
 		return nil, ErrBadPublicKey
 	}
 
-	if nil != doc.UserData && (len(doc.UserData) < 1 || len(doc.UserData) > 512) {
+	if len(doc.UserData) > 512 {
 		return nil, ErrBadUserData
 	}
 
-	if nil != doc.Nonce && (len(doc.Nonce) < 1 || len(doc.Nonce) > 512) {
+	if len(doc.Nonce) > 512 {
 		return nil, ErrBadNonce
 	}
 
@@ -283,8 +288,12 @@ func Verify(data []byte, options VerifyOptions) (*Result, error) {
 		panic(fmt.Sprintf("Failed to marshal a cbor signature structure %v", err))
 	}
 
-	err = cert.CheckSignature(x509.ECDSAWithSHA384, sigStruct, cose.Signature)
-	if nil != err {
+	verifier := &mozcose.Verifier{
+		PublicKey: cert.PublicKey.(*ecdsa.PublicKey),
+		Alg:       mozcose.ES384,
+	}
+	digest := sha512.Sum384(sigStruct)
+	if err = verifier.Verify(digest[:], cose.Signature); err != nil {
 		return nil, ErrBadSignature
 	}
 
