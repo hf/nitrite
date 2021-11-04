@@ -2,10 +2,14 @@
 package nitrite
 
 import (
+	"crypto/ecdsa"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"github.com/fxamacker/cbor/v2"
+	"math/big"
 	"time"
 )
 
@@ -40,6 +44,10 @@ type Result struct {
 	// Signature section from the COSE Sign1 payload.
 	Signature []byte `json:"signature,omitempty"`
 
+	// SignatureOK designates if the signature was OK (but certificate could be
+	// invalid, not trusted, expired, etc.)
+	SignatureOK bool `json:"signature_ok"`
+
 	// COSESign1 contains the COSE Signature Structure which was used to
 	// calculate the `Signature`.
 	COSESign1 []byte `json:"cose_sign1,omitempty"`
@@ -55,11 +63,29 @@ type VerifyOptions struct {
 }
 
 type coseHeader struct {
-	Algorithm string `cbor:"1,keyasint,omitempty" json:"alg,omitempty"`
+	Alg interface{} `cbor:"1,keyasint,omitempty" json:"alg,omitempty"`
+}
+
+func (h *coseHeader) AlgorithmString() (string, bool) {
+	switch h.Alg.(type) {
+	case string:
+		return h.Alg.(string), true
+	}
+
+	return "", false
+}
+
+func (h *coseHeader) AlgorithmInt() (int64, bool) {
+	switch h.Alg.(type) {
+	case int64:
+		return h.Alg.(int64), true
+	}
+
+	return 0, false
 }
 
 type cosePayload struct {
-	_ struct{} `cbor:",toarray,omitempty"`
+	_ struct{} `cbor:",toarray"`
 
 	Protected   []byte
 	Unprotected cbor.RawMessage
@@ -68,7 +94,7 @@ type cosePayload struct {
 }
 
 type coseSignature struct {
-	_ struct{} `cbor:",toarray,omitempty"`
+	_ struct{} `cbor:",toarray"`
 
 	Context     string
 	Protected   []byte
@@ -111,7 +137,7 @@ const (
 	// It's recommended you calculate the SHA256 sum of this string and match
 	// it to the one supplied in the AWS documentation
 	// https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html
-	DefaultCARoots string = "-----BEGIN CERTIFICATE-----\nMIICETCCAZagAwIBAgIRAPkxdWgbkK/hHUbMtOTn+FYwCgYIKoZIzj0EAwMwSTEL\nMAkGA1UEBhMCVVMxDzANBgNVBAoMBkFtYXpvbjEMMAoGA1UECwwDQVdTMRswGQYD\nVQQDDBJhd3Mubml0cm8tZW5jbGF2ZXMwHhcNMTkxMDI4MTMyODA1WhcNNDkxMDI4\nMTQyODA1WjBJMQswCQYDVQQGEwJVUzEPMA0GA1UECgwGQW1hem9uMQwwCgYDVQQL\nDANBV1MxGzAZBgNVBAMMEmF3cy5uaXRyby1lbmNsYXZlczB2MBAGByqGSM49AgEG\nBSuBBAAiA2IABPwCVOumCMHzaHDimtqQvkY4MpJzbolL//Zy2YlES1BR5TSksfbb\n48C8WBoyt7F2Bw7eEtaaP+ohG2bnUs990d0JX28TcPQXCEPZ3BABIeTPYwEoCWZE\nh8l5YoQwTcU/9KNCMEAwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUkCW1DdkF\nR+eWw5b6cp3PmanfS5YwDgYDVR0PAQH/BAQDAgGGMAoGCCqGSM49BAMDA2kAMGYC\nMQCjfy+Rocm9Xue4YnwWmNJVA44fA0P5W2OpYow9OYCVRaEevL8uO1XYru5xtMPW\nrfMCMQCi85sWBbJwKKXdS6BptQFuZbT73o/gBh1qUxl/nNr12UO8Yfwr6wPLb+6N\nIwLz3/Y=\n-----END CERTIFICATE----\n"
+	DefaultCARoots string = "-----BEGIN CERTIFICATE-----\nMIICETCCAZagAwIBAgIRAPkxdWgbkK/hHUbMtOTn+FYwCgYIKoZIzj0EAwMwSTEL\nMAkGA1UEBhMCVVMxDzANBgNVBAoMBkFtYXpvbjEMMAoGA1UECwwDQVdTMRswGQYD\nVQQDDBJhd3Mubml0cm8tZW5jbGF2ZXMwHhcNMTkxMDI4MTMyODA1WhcNNDkxMDI4\nMTQyODA1WjBJMQswCQYDVQQGEwJVUzEPMA0GA1UECgwGQW1hem9uMQwwCgYDVQQL\nDANBV1MxGzAZBgNVBAMMEmF3cy5uaXRyby1lbmNsYXZlczB2MBAGByqGSM49AgEG\nBSuBBAAiA2IABPwCVOumCMHzaHDimtqQvkY4MpJzbolL//Zy2YlES1BR5TSksfbb\n48C8WBoyt7F2Bw7eEtaaP+ohG2bnUs990d0JX28TcPQXCEPZ3BABIeTPYwEoCWZE\nh8l5YoQwTcU/9KNCMEAwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUkCW1DdkF\nR+eWw5b6cp3PmanfS5YwDgYDVR0PAQH/BAQDAgGGMAoGCCqGSM49BAMDA2kAMGYC\nMQCjfy+Rocm9Xue4YnwWmNJVA44fA0P5W2OpYow9OYCVRaEevL8uO1XYru5xtMPW\nrfMCMQCi85sWBbJwKKXdS6BptQFuZbT73o/gBh1qUxl/nNr12UO8Yfwr6wPLb+6N\nIwLz3/Y=\n-----END CERTIFICATE-----\n"
 )
 
 var (
@@ -129,6 +155,16 @@ func createAWSNitroRoot() *x509.CertPool {
 	return pool
 }
 
+func reverse(enc []byte) []byte {
+	rev := make([]byte, len(enc))
+
+	for i, b := range enc {
+		rev[len(enc)-i-1] = b
+	}
+
+	return rev
+}
+
 // Verify verifies the attestation payload from `data` with the provided
 // verification options. If the options specify `Roots` as `nil`, the
 // `DefaultCARoot` will be used. If you do not specify `CurrentTime`,
@@ -137,6 +173,12 @@ func createAWSNitroRoot() *x509.CertPool {
 // `Err` codes specified in this package, or is an error from the `crypto/x509`
 // package. Revocation checks are NOT performed and you should check for
 // revoked certificates by looking at the `Certificates` field in the `Result`.
+// Result will be non-null if and only if either of these are true: certificate
+// verification has passed, certificate verification has failed (expired, not
+// trusted, etc.), signature is OK or signature is not OK. If either signature
+// is not OK or certificate can't be verified, both Result and error will be
+// set! You can use the SignatureOK field from the result to distinguish
+// errors.
 func Verify(data []byte, options VerifyOptions) (*Result, error) {
 	cose := cosePayload{}
 
@@ -163,8 +205,31 @@ func Verify(data []byte, options VerifyOptions) (*Result, error) {
 		return nil, ErrBadCOSESign1Structure
 	}
 
-	if "ECDSA384" != header.Algorithm {
-		return nil, ErrCOSESign1BadAlgorithm
+	intAlg, ok := header.AlgorithmInt()
+
+	// https://datatracker.ietf.org/doc/html/rfc8152#section-8.1
+	if ok {
+		switch intAlg {
+		case -35:
+			// do nothing -- OK
+
+		default:
+			return nil, ErrCOSESign1BadAlgorithm
+		}
+	} else {
+		strAlg, ok := header.AlgorithmString()
+
+		if ok {
+			switch strAlg {
+			case "ES384":
+				// do nothing -- OK
+
+			default:
+				return nil, ErrCOSESign1BadAlgorithm
+			}
+		} else {
+			return nil, ErrCOSESign1BadAlgorithm
+		}
 	}
 
 	doc := Document{}
@@ -195,7 +260,7 @@ func Verify(data []byte, options VerifyOptions) (*Result, error) {
 			return nil, ErrBadPCRIndex
 		}
 
-		if nil == value || 32 != len(value) || 48 != len(value) || 64 != len(value) {
+		if nil == value || !(32 == len(value) || 48 == len(value) || 64 == len(value)) {
 			return nil, ErrBadPCRValue
 		}
 	}
@@ -269,23 +334,18 @@ func Verify(data []byte, options VerifyOptions) (*Result, error) {
 			x509.ExtKeyUsageAny,
 		},
 	})
-	if nil != err {
-		return nil, err
-	}
 
-	sigStruct, err := cbor.Marshal(&coseSignature{
+	sigStruct, _ := cbor.Marshal(&coseSignature{
 		Context:     "Signature1",
 		Protected:   cose.Protected,
 		ExternalAAD: []byte{},
 		Payload:     cose.Payload,
 	})
-	if nil != err {
-		panic(fmt.Sprintf("Failed to marshal a cbor signature structure %v", err))
-	}
 
-	err = cert.CheckSignature(x509.ECDSAWithSHA384, sigStruct, cose.Signature)
-	if nil != err {
-		return nil, ErrBadSignature
+	signatureOk := checkECDSASignature(cert.PublicKey.(*ecdsa.PublicKey), sigStruct, cose.Signature)
+
+	if !signatureOk && nil == err {
+		err = ErrBadSignature
 	}
 
 	return &Result{
@@ -295,6 +355,46 @@ func Verify(data []byte, options VerifyOptions) (*Result, error) {
 		Unprotected:  cose.Unprotected,
 		Payload:      cose.Payload,
 		Signature:    cose.Signature,
+		SignatureOK:  signatureOk,
 		COSESign1:    sigStruct,
-	}, nil
+	}, err
+}
+
+func checkECDSASignature(publicKey *ecdsa.PublicKey, sigStruct, signature []byte) bool {
+	// https://datatracker.ietf.org/doc/html/rfc8152#section-8.1
+
+	var hashSigStruct []byte = nil
+
+	switch publicKey.Curve.Params().Name {
+	case "P-224":
+		h := sha256.Sum224(sigStruct)
+		hashSigStruct = h[:]
+
+	case "P-256":
+		h := sha256.Sum256(sigStruct)
+		hashSigStruct = h[:]
+
+	case "P-384":
+		h := sha512.Sum384(sigStruct)
+		hashSigStruct = h[:]
+
+	case "P-512":
+		h := sha512.Sum512(sigStruct)
+		hashSigStruct = h[:]
+
+	default:
+		panic(fmt.Sprintf("unknown ECDSA curve name %v", publicKey.Curve.Params().Name))
+	}
+
+	if len(signature) != 2*len(hashSigStruct) {
+		return false
+	}
+
+	r := big.NewInt(0)
+	s := big.NewInt(0)
+
+	r = r.SetBytes(signature[:len(hashSigStruct)])
+	s = s.SetBytes(signature[len(hashSigStruct):])
+
+	return ecdsa.Verify(publicKey, hashSigStruct, r, s)
 }
