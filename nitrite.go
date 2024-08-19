@@ -156,16 +156,6 @@ func createAWSNitroRoot() *x509.CertPool {
 	return pool
 }
 
-func reverse(enc []byte) []byte {
-	rev := make([]byte, len(enc))
-
-	for i, b := range enc {
-		rev[len(enc)-i-1] = b
-	}
-
-	return rev
-}
-
 // Verify verifies the attestation payload from `data` with the provided
 // verification options. If the options specify `Roots` as `nil`, the
 // `DefaultCARoot` will be used. If you do not specify `CurrentTime`,
