@@ -8,9 +8,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"github.com/fxamacker/cbor/v2"
 	"math/big"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 // Document represents the AWS Nitro Enclave Attestation Document.
@@ -84,7 +85,7 @@ func (h *coseHeader) AlgorithmInt() (int64, bool) {
 	return 0, false
 }
 
-type cosePayload struct {
+type CosePayload struct {
 	_ struct{} `cbor:",toarray"`
 
 	Protected   []byte
@@ -180,7 +181,7 @@ func reverse(enc []byte) []byte {
 // set! You can use the SignatureOK field from the result to distinguish
 // errors.
 func Verify(data []byte, options VerifyOptions) (*Result, error) {
-	cose := cosePayload{}
+	cose := CosePayload{}
 
 	err := cbor.Unmarshal(data, &cose)
 	if nil != err {
@@ -397,4 +398,30 @@ func checkECDSASignature(publicKey *ecdsa.PublicKey, sigStruct, signature []byte
 	s = s.SetBytes(signature[len(hashSigStruct):])
 
 	return ecdsa.Verify(publicKey, hashSigStruct, r, s)
+}
+
+// Timestamp extracts attestation timestamp from `data` without verifying
+// the attestation.
+func Timestamp(data []byte) (time.Time, error) {
+	cose := CosePayload{}
+	err := cbor.Unmarshal(data, &cose)
+	if nil != err {
+		return time.Time{}, errors.Join(ErrBadCOSESign1Structure, err)
+	}
+
+	doc := Document{}
+	err = cbor.Unmarshal(cose.Payload, &doc)
+	if nil != err {
+		return time.Time{}, errors.Join(ErrBadAttestationDocument, err)
+	}
+
+	if doc.Timestamp == 0 {
+		return time.Time{},
+			errors.Join(ErrMandatoryFieldsMissing, fmt.Errorf("no timestamp"))
+	}
+
+	// https://docs.aws.amazon.com/pdfs/enclaves/latest/user/enclaves-user.pdf
+	// (p. 64) describes Timestamp as "UTC time when document was created,
+	// in milliseconds"
+	return time.UnixMilli(int64(doc.Timestamp)), nil
 }
