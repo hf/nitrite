@@ -1,14 +1,38 @@
 package nitrite_test
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/hf/nitrite"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
+
+func requireNoError(t *testing.T, err error) {
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func requireEqual(t *testing.T, want, got interface{}) {
+	if want != got {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+}
+
+func requireErrorIs(t *testing.T, got, want error) {
+	if !errors.Is(got, want) {
+		t.Fatalf("want error %v, got %v", want, got)
+	}
+}
+
+func requireErrorContains(t *testing.T, err error, substr string) {
+	if !strings.Contains(err.Error(), substr) {
+		t.Fatalf("error %q does not contain %q", err, substr)
+	}
+}
 
 func TestAttestationCreatedAt(t *testing.T) {
 	t.Run("happy path", func(t *testing.T) {
@@ -18,19 +42,19 @@ func TestAttestationCreatedAt(t *testing.T) {
 			Timestamp: uint64(wantTime.UnixMilli()),
 		}
 		docBytes, err := cbor.Marshal(doc)
-		require.NoError(t, err)
+		requireNoError(t, err)
 		cosePayload := nitrite.CosePayload{
 			Payload: docBytes,
 		}
 		cosePayloadBytes, err := cbor.Marshal(cosePayload)
-		require.NoError(t, err)
+		requireNoError(t, err)
 
 		// when
 		gotTime, err := nitrite.Timestamp(cosePayloadBytes)
 
 		// then
-		require.NoError(t, err)
-		assert.Equal(t, wantTime.UnixMilli(), gotTime.UnixMilli())
+		requireNoError(t, err)
+		requireEqual(t, wantTime.UnixMilli(), gotTime.UnixMilli())
 	})
 
 	t.Run("cannot unmarshal COSE payload", func(t *testing.T) {
@@ -38,7 +62,7 @@ func TestAttestationCreatedAt(t *testing.T) {
 		_, err := nitrite.Timestamp([]byte("invalid"))
 
 		// then
-		assert.ErrorIs(t, err, nitrite.ErrBadCOSESign1Structure)
+		requireErrorIs(t, err, nitrite.ErrBadCOSESign1Structure)
 	})
 
 	t.Run("cannot unmarshal Document", func(t *testing.T) {
@@ -47,13 +71,13 @@ func TestAttestationCreatedAt(t *testing.T) {
 			Payload: []byte("invalid"),
 		}
 		cosePayloadBytes, err := cbor.Marshal(cosePayload)
-		require.NoError(t, err)
+		requireNoError(t, err)
 
 		// when
 		_, err = nitrite.Timestamp(cosePayloadBytes)
 
 		// then
-		assert.ErrorIs(t, err, nitrite.ErrBadAttestationDocument)
+		requireErrorIs(t, err, nitrite.ErrBadAttestationDocument)
 	})
 
 	t.Run("attestation document has no timestamp", func(t *testing.T) {
@@ -62,18 +86,18 @@ func TestAttestationCreatedAt(t *testing.T) {
 			Timestamp: 0,
 		}
 		docBytes, err := cbor.Marshal(doc)
-		require.NoError(t, err)
+		requireNoError(t, err)
 		cosePayload := nitrite.CosePayload{
 			Payload: docBytes,
 		}
 		cosePayloadBytes, err := cbor.Marshal(cosePayload)
-		require.NoError(t, err)
+		requireNoError(t, err)
 
 		// when
 		_, err = nitrite.Timestamp(cosePayloadBytes)
 
 		// then
-		assert.ErrorIs(t, err, nitrite.ErrMandatoryFieldsMissing)
-		assert.ErrorContains(t, err, "no timestamp")
+		requireErrorIs(t, err, nitrite.ErrMandatoryFieldsMissing)
+		requireErrorContains(t, err, "no timestamp")
 	})
 }
