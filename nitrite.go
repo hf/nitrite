@@ -85,7 +85,7 @@ func (h *coseHeader) AlgorithmInt() (int64, bool) {
 	return 0, false
 }
 
-type CosePayload struct {
+type cosePayload struct {
 	_ struct{} `cbor:",toarray"`
 
 	Protected   []byte
@@ -181,7 +181,7 @@ func reverse(enc []byte) []byte {
 // set! You can use the SignatureOK field from the result to distinguish
 // errors.
 func Verify(data []byte, options VerifyOptions) (*Result, error) {
-	cose := CosePayload{}
+	cose := cosePayload{}
 
 	err := cbor.Unmarshal(data, &cose)
 	if nil != err {
@@ -403,7 +403,7 @@ func checkECDSASignature(publicKey *ecdsa.PublicKey, sigStruct, signature []byte
 // Timestamp extracts attestation timestamp from `data` without verifying
 // the attestation.
 func Timestamp(data []byte) (time.Time, error) {
-	cose := CosePayload{}
+	cose := cosePayload{}
 	err := cbor.Unmarshal(data, &cose)
 	if nil != err {
 		return time.Time{}, ErrBadCOSESign1Structure

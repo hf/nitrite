@@ -27,6 +27,15 @@ func requireErrorIs(t *testing.T, got, want error) {
 	}
 }
 
+type testingCOSEPayload struct {
+	_ struct{} `cbor:",toarray"`
+
+	Protected   []byte
+	Unprotected cbor.RawMessage
+	Payload     []byte
+	Signature   []byte
+}
+
 func TestAttestationCreatedAt(t *testing.T) {
 	timeToMillis := func(t time.Time) uint64 {
 		return uint64(t.UnixNano() / 1e6)
@@ -40,7 +49,7 @@ func TestAttestationCreatedAt(t *testing.T) {
 		}
 		docBytes, err := cbor.Marshal(doc)
 		requireNoError(t, err)
-		cosePayload := nitrite.CosePayload{
+		cosePayload := testingCOSEPayload{
 			Payload: docBytes,
 		}
 		cosePayloadBytes, err := cbor.Marshal(cosePayload)
@@ -64,7 +73,7 @@ func TestAttestationCreatedAt(t *testing.T) {
 
 	t.Run("cannot unmarshal Document", func(t *testing.T) {
 		// given
-		cosePayload := nitrite.CosePayload{
+		cosePayload := testingCOSEPayload{
 			Payload: []byte("invalid"),
 		}
 		cosePayloadBytes, err := cbor.Marshal(cosePayload)
@@ -84,7 +93,7 @@ func TestAttestationCreatedAt(t *testing.T) {
 		}
 		docBytes, err := cbor.Marshal(doc)
 		requireNoError(t, err)
-		cosePayload := nitrite.CosePayload{
+		cosePayload := testingCOSEPayload{
 			Payload: docBytes,
 		}
 		cosePayloadBytes, err := cbor.Marshal(cosePayload)
