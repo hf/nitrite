@@ -10,21 +10,21 @@ import (
 	"github.com/hf/nitrite"
 )
 
-func requireNoError(t *testing.T, err error) {
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func requireNoError(t *testing.T, got error) {
+	if got != nil {
+		t.Fatalf("unexpected error: %v", got)
 	}
 }
 
-func requireEqual(t *testing.T, want, got interface{}) {
-	if want != got {
-		t.Fatalf("want %v, got %v", want, got)
+func requireEqual(t *testing.T, got, want interface{}) {
+	if got != want {
+		t.Fatalf("not equal: want %v, got %v", want, got)
 	}
 }
 
 func requireErrorIs(t *testing.T, got, want error) {
 	if !errors.Is(got, want) {
-		t.Fatalf("want error %v, got %v", want, got)
+		t.Fatalf("unexpected error type: want %T, got %T", want, got)
 	}
 }
 
@@ -54,7 +54,7 @@ func TestAttestationCreatedAt(t *testing.T) {
 
 		// then
 		requireNoError(t, err)
-		requireEqual(t, wantTime.UnixMilli(), gotTime.UnixMilli())
+		requireEqual(t, gotTime.UnixMilli(), wantTime.UnixMilli())
 	})
 
 	t.Run("cannot unmarshal COSE payload", func(t *testing.T) {
