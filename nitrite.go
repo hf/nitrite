@@ -406,22 +406,22 @@ func Timestamp(data []byte) (time.Time, error) {
 	cose := CosePayload{}
 	err := cbor.Unmarshal(data, &cose)
 	if nil != err {
-		return time.Time{}, errors.Join(ErrBadCOSESign1Structure, err)
+		return time.Time{}, ErrBadCOSESign1Structure
 	}
 
 	doc := Document{}
 	err = cbor.Unmarshal(cose.Payload, &doc)
 	if nil != err {
-		return time.Time{}, errors.Join(ErrBadAttestationDocument, err)
+		return time.Time{}, ErrBadAttestationDocument
 	}
 
 	if doc.Timestamp == 0 {
-		return time.Time{},
-			errors.Join(ErrMandatoryFieldsMissing, fmt.Errorf("no timestamp"))
+		return time.Time{}, ErrMandatoryFieldsMissing
 	}
 
 	// https://docs.aws.amazon.com/pdfs/enclaves/latest/user/enclaves-user.pdf
 	// (p. 64) describes Timestamp as "UTC time when document was created,
 	// in milliseconds"
-	return time.UnixMilli(int64(doc.Timestamp)), nil
+	msec := int64(doc.Timestamp)
+	return time.Unix(msec/1e3, (msec%1e3)*1e6), nil
 }

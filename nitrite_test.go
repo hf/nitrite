@@ -2,7 +2,6 @@ package nitrite_test
 
 import (
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,28 +17,26 @@ func requireNoError(t *testing.T, got error) {
 
 func requireEqual(t *testing.T, got, want interface{}) {
 	if got != want {
-		t.Fatalf("not equal: want %v, got %v", want, got)
+		t.Fatalf("not equal: got %v, want %v", got, want)
 	}
 }
 
 func requireErrorIs(t *testing.T, got, want error) {
 	if !errors.Is(got, want) {
-		t.Fatalf("unexpected error type: want %T, got %T", want, got)
-	}
-}
-
-func requireErrorContains(t *testing.T, err error, substr string) {
-	if !strings.Contains(err.Error(), substr) {
-		t.Fatalf("error %q does not contain %q", err, substr)
+		t.Fatalf("unexpected error type: got %T, want %T", got, want)
 	}
 }
 
 func TestAttestationCreatedAt(t *testing.T) {
+	timeToMillis := func(t time.Time) uint64 {
+		return uint64(t.UnixNano() / 1e6)
+	}
+
 	t.Run("happy path", func(t *testing.T) {
 		// given
 		wantTime := time.Now()
 		doc := nitrite.Document{
-			Timestamp: uint64(wantTime.UnixMilli()),
+			Timestamp: timeToMillis(wantTime),
 		}
 		docBytes, err := cbor.Marshal(doc)
 		requireNoError(t, err)
@@ -54,7 +51,7 @@ func TestAttestationCreatedAt(t *testing.T) {
 
 		// then
 		requireNoError(t, err)
-		requireEqual(t, gotTime.UnixMilli(), wantTime.UnixMilli())
+		requireEqual(t, timeToMillis(gotTime), timeToMillis(wantTime))
 	})
 
 	t.Run("cannot unmarshal COSE payload", func(t *testing.T) {
@@ -98,6 +95,5 @@ func TestAttestationCreatedAt(t *testing.T) {
 
 		// then
 		requireErrorIs(t, err, nitrite.ErrMandatoryFieldsMissing)
-		requireErrorContains(t, err, "no timestamp")
 	})
 }
