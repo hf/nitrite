@@ -8,9 +8,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"github.com/fxamacker/cbor/v2"
 	"math/big"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 // Document represents the AWS Nitro Enclave Attestation Document.
@@ -122,9 +123,9 @@ var (
 	ErrBadPCRValue                      error = errors.New("Payload 'pcrs' value is nil or not of length {32,48,64}")
 	ErrBadCABundle                      error = errors.New("Payload 'cabundle' has 0 elements")
 	ErrBadCABundleItem                  error = errors.New("Payload 'cabundle' has a nil item or of length not in [1, 1024]")
-	ErrBadPublicKey                     error = errors.New("Payload 'public_key' has a value of length not in [1, 1024]")
-	ErrBadUserData                      error = errors.New("Payload 'user_data' has a value of length not in [1, 512]")
-	ErrBadNonce                         error = errors.New("Payload 'nonce' has a value of length not in [1, 512]")
+	ErrBadPublicKey                     error = errors.New("Payload 'public_key' has a value of length not in [0, 1024]")
+	ErrBadUserData                      error = errors.New("Payload 'user_data' has a value of length not in [0, 1024]")
+	ErrBadNonce                         error = errors.New("Payload 'nonce' has a value of length not in [0, 1024]")
 	ErrBadCertificatePublicKeyAlgorithm error = errors.New("Payload 'certificate' has a bad public key algorithm (not ECDSA)")
 	ErrBadCertificateSigningAlgorithm   error = errors.New("Payload 'certificate' has a bad public key signing algorithm (not ECDSAWithSHA384)")
 	ErrBadSignature                     error = errors.New("Payload's signature does not match signature from certificate")
@@ -275,15 +276,15 @@ func Verify(data []byte, options VerifyOptions) (*Result, error) {
 		}
 	}
 
-	if nil != doc.PublicKey && (len(doc.PublicKey) < 1 || len(doc.PublicKey) > 1024) {
+	if nil != doc.PublicKey && len(doc.PublicKey) > 1024 {
 		return nil, ErrBadPublicKey
 	}
 
-	if nil != doc.UserData && (len(doc.UserData) < 1 || len(doc.UserData) > 512) {
+	if nil != doc.UserData && len(doc.UserData) > 1024 {
 		return nil, ErrBadUserData
 	}
 
-	if nil != doc.Nonce && (len(doc.Nonce) < 1 || len(doc.Nonce) > 512) {
+	if nil != doc.Nonce && len(doc.Nonce) > 1024 {
 		return nil, ErrBadNonce
 	}
 
