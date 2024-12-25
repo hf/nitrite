@@ -399,3 +399,29 @@ func checkECDSASignature(publicKey *ecdsa.PublicKey, sigStruct, signature []byte
 
 	return ecdsa.Verify(publicKey, hashSigStruct, r, s)
 }
+
+// Timestamp extracts attestation timestamp from `data` without verifying
+// the attestation.
+func Timestamp(data []byte) (time.Time, error) {
+	cose := cosePayload{}
+	err := cbor.Unmarshal(data, &cose)
+	if nil != err {
+		return time.Time{}, ErrBadCOSESign1Structure
+	}
+
+	doc := Document{}
+	err = cbor.Unmarshal(cose.Payload, &doc)
+	if nil != err {
+		return time.Time{}, ErrBadAttestationDocument
+	}
+
+	if doc.Timestamp == 0 {
+		return time.Time{}, ErrMandatoryFieldsMissing
+	}
+
+	// https://docs.aws.amazon.com/pdfs/enclaves/latest/user/enclaves-user.pdf
+	// (p. 64) describes Timestamp as "UTC time when document was created,
+	// in milliseconds"
+	msec := int64(doc.Timestamp)
+	return time.Unix(msec/1e3, (msec%1e3)*1e6), nil
+}
